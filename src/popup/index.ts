@@ -2,8 +2,15 @@ import {
   backgroundRequest, CHANNEL, DEFAULT_SETTINGS, isPositiveRate, otherCurrency, selectionErrorKey, sitePattern, websiteHostname,
   type ContentRequest, type Currency, type DisplayMode, type EffectiveRate, type PageStatus, type Preferences, type Reply, type Settings,
 } from '../shared/types';
+import { createNotesEditor } from './notes';
 
 const element = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+// Notes stay available even when tab access, conversion settings, or exchange rates fail.
+const notesEditor = createNotesEditor({
+  textarea: element<HTMLTextAreaElement>('notes'), status: element('notes-save-status'),
+  retry: element<HTMLButtonElement>('notes-retry'),
+});
+window.addEventListener('pagehide', () => notesEditor.dispose(), { once: true });
 const source = element<HTMLSelectElement>('source');
 const target = element<HTMLSelectElement>('target');
 const detect = element<HTMLInputElement>('detect');

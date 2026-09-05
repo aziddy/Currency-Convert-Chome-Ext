@@ -58,6 +58,15 @@
 
     <div class="actions"><button id="convert" class="primary-button" type="button" disabled>Convert page <span aria-hidden="true">↗</span></button><button id="restore" class="restore-button" type="button" disabled>Restore originals</button></div>
     <p id="status" class="status" role="status" aria-live="polite">Getting ready…</p>
+    <section class="notes-section" aria-labelledby="notes-label">
+      <label id="notes-label" for="notes">Notes</label>
+      <p id="notes-hint" class="hint">Shared across websites · saved on this device.</p>
+      <textarea id="notes" rows="4" placeholder="Write a note…" aria-describedby="notes-hint notes-save-status" disabled></textarea>
+      <div class="notes-save-row">
+        <p id="notes-save-status" class="hint" role="status" aria-live="polite" aria-atomic="true">Loading notes…</p>
+        <button id="notes-retry" class="text-button" type="button" hidden>Retry</button>
+      </div>
+    </section>
     <footer>Estimates only · Your bank's final rate may differ.</footer>
   </main>
 </body>

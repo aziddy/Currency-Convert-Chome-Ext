@@ -13,8 +13,7 @@ let extensionId: string;
 let shop: Page;
 let popup: Page;
 
-test.beforeEach(async () => {
-  profile = await mkdtemp(path.join(tmpdir(), 'price-converter-e2e-'));
+async function launchExtension(): Promise<void> {
   context = await chromium.launchPersistentContext(profile, {
     channel: 'chromium', headless: true,
     args: [
@@ -25,6 +24,11 @@ test.beforeEach(async () => {
   worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   extensionId = worker.url().split('/')[2]!;
   browserSession = await context.browser()!.newBrowserCDPSession();
+}
+
+test.beforeEach(async () => {
+  profile = await mkdtemp(path.join(tmpdir(), 'price-converter-e2e-'));
+  await launchExtension();
   // Deterministic reference rate: browser tests never depend on today's rate/API availability.
   await worker.evaluate(async () => {
     await chrome.storage.local.set({ rateCache: { usdToCad: 1.4, date: '2026-09-04', fetchedAt: Date.now() } });
@@ -54,10 +58,126 @@ async function openPopup(supported = true): Promise<Page> {
   const view = await popupEvent;
   await view.waitForURL(`chrome-extension://${extensionId}/popup.html`);
   if (supported) await expect(view.locator('#convert')).toBeEnabled();
-  else await expect(view.locator('#status')).toContainText('Open an ordinary website');
+  else {
+    await expect(view.locator('#site-name')).toHaveText('Unavailable on this page');
+    await expect(view.locator('#convert')).toBeDisabled();
+  }
   await view.bringToFront();
   return view;
 }
+
+test('shared notes autosave multiline text across websites and support clearing', async () => {
+  popup = await openPopup();
+  await popup.setViewportSize({ width: 390, height: 600 });
+  const note = 'Weekend budget: USD 200\nCafé ☕\n<b>Plain text only</b>\n';
+  await expect(popup.getByRole('textbox', { name: 'Notes', exact: true })).toBeEnabled();
+  await expect(popup.locator('#notes')).toHaveValue('');
+  await popup.locator('#notes').fill(note);
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  expect(await worker.evaluate(async () => (await chrome.storage.local.get('notes')).notes)).toBe(note);
+  await popup.locator('#notes').focus();
+  await expect(popup.locator('#notes')).toBeFocused();
+  await popup.locator('.notes-section').scrollIntoViewIfNeeded();
+  expect(await popup.evaluate(() => document.body.scrollWidth <= document.body.clientWidth)).toBe(true);
+  await popup.screenshot({ path: 'test-results/popup-notes.png' });
+  await popup.close();
+  await shop.goto('http://localhost:4173');
+  popup = await openPopup();
+  await expect(popup.locator('#notes')).toHaveValue(note);
+  await popup.locator('#notes').fill('');
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  await popup.close(); popup = await openPopup();
+  await expect(popup.locator('#notes')).toHaveValue('');
+});
+
+test('notes keep the final edit when the popup closes before queued saves finish', async () => {
+  popup = await openPopup();
+  await expect(popup.locator('#notes')).toBeEnabled();
+  await worker.evaluate(() => {
+    const write = chrome.storage.local.set.bind(chrome.storage.local);
+    chrome.storage.local.set = (async (values: Record<string, unknown>) => {
+      if (Object.hasOwn(values, 'notes')) await new Promise(resolve => setTimeout(resolve, 100));
+      await write(values);
+    }) as typeof chrome.storage.local.set;
+  });
+  await popup.locator('#notes').evaluate(element => {
+    for (const text of ['L', 'La', 'Last', 'Last edit', 'Last edit\n☕']) {
+      (element as HTMLTextAreaElement).value = text;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saving…');
+  await popup.close();
+  await expect.poll(() => worker.evaluate(async () => (await chrome.storage.local.get('notes')).notes)).toBe('Last edit\n☕');
+  popup = await openPopup();
+  await expect(popup.locator('#notes')).toHaveValue('Last edit\n☕');
+});
+
+test('notes work offline on protected pages when the exchange rate fails', async () => {
+  await worker.evaluate(() => chrome.storage.local.remove('rateCache'));
+  await context.route('https://api.frankfurter.dev/v2/rate/USD/CAD', route => route.abort());
+  await context.setOffline(true);
+  await shop.goto('chrome://version');
+  popup = await openPopup(false);
+  await expect(popup.locator('#notes')).toBeEnabled();
+  await popup.locator('#notes').fill('Offline note');
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  await expect(popup.locator('#rate-value')).toHaveText('Exchange rate unavailable');
+  await expect(popup.locator('#convert')).toBeDisabled();
+  await popup.close(); popup = await openPopup(false);
+  await expect(popup.locator('#notes')).toHaveValue('Offline note');
+});
+
+test('notes survive background worker and full browser restarts', async () => {
+  popup = await openPopup();
+  await popup.locator('#notes').fill('Before restart');
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  const session = await context.newCDPSession(popup);
+  await session.send('ServiceWorker.enable');
+  await session.send('ServiceWorker.stopAllWorkers');
+  await popup.locator('#notes').fill('After worker restart');
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  await session.detach();
+  await context.close();
+  await launchExtension();
+  shop = await context.newPage(); await shop.goto('http://127.0.0.1:4173');
+  popup = await openPopup();
+  await expect(popup.locator('#notes')).toHaveValue('After worker restart');
+});
+
+test('notes storage failures retain text and can be retried', async () => {
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({ notes: 'Existing note' });
+    type StorageGet = (keys: string | string[] | Record<string, unknown> | null) => Promise<Record<string, unknown>>;
+    const read = chrome.storage.local.get.bind(chrome.storage.local) as StorageGet;
+    let fail = true;
+    chrome.storage.local.get = (async (keys: Parameters<StorageGet>[0]) => {
+      if (keys === 'notes' && fail) { fail = false; throw new Error('Storage read unavailable'); }
+      return read(keys);
+    }) as typeof chrome.storage.local.get;
+  });
+  popup = await openPopup();
+  await expect(popup.locator('#notes-save-status')).toHaveText('Could not load notes.');
+  await expect(popup.locator('#notes')).toBeDisabled();
+  await popup.locator('#notes-retry').click();
+  await expect(popup.locator('#notes')).toHaveValue('Existing note');
+  await worker.evaluate(() => {
+    const write = chrome.storage.local.set.bind(chrome.storage.local);
+    let fail = true;
+    chrome.storage.local.set = (async (values: Record<string, unknown>) => {
+      if (Object.hasOwn(values, 'notes') && fail) { fail = false; throw new Error('Storage write unavailable'); }
+      await write(values);
+    }) as typeof chrome.storage.local.set;
+  });
+  await popup.locator('#notes').fill('Retain this draft');
+  await expect(popup.locator('#notes-save-status')).toContainText('Could not save notes');
+  await expect(popup.locator('#notes')).toHaveValue('Retain this draft');
+  await expect(popup.locator('#notes-retry')).toBeVisible();
+  await popup.locator('#notes-retry').click();
+  await expect(popup.locator('#notes-save-status')).toHaveText('Saved');
+  await popup.close(); popup = await openPopup();
+  await expect(popup.locator('#notes')).toHaveValue('Retain this draft');
+});
 
 async function grantTestSiteAccess(): Promise<void> {
   // Grant through Chrome's own extension-management API in this temporary profile.

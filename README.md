@@ -55,6 +55,14 @@ Select the complete amount: multiple amounts, partial digits, unsupported curren
 
 The menu appears only for text selections on HTTP/HTTPS pages and validates the amount when clicked. It adds the `contextMenus` permission and uses temporary `activeTab` access from the menu click, not always-on website access or a new settings toggle.
 
+## Notes
+
+The popup includes a plain-text **Notes** box below the conversion controls. It is one shared note for every website, with no separate Save button. Text, line breaks, and Unicode are preserved; clearing the box saves an empty note.
+
+Edits are sent immediately to the background worker and saved in order. **Saving…** changes to **Saved** once the latest edit is stored. Closing the popup does not discard edits already submitted to the worker. Notes remain available offline and on Chrome-protected pages, independently of exchange-rate loading or conversion errors.
+
+If saving fails, the draft stays visible: keep the popup open and click **Retry**. If loading fails, the box stays disabled until a retry succeeds so an existing note cannot be accidentally overwritten. Notes are stored locally in this Chrome profile, persist across browser restarts and extension reloads, and are removed if the extension is uninstalled. They are not synced to other devices or sent to the exchange-rate service.
+
 ## Exchange rates and privacy
 
 Daily rates come from [Frankfurter's public API](https://frankfurter.dev/). The extension fetches one USD/CAD pair, caches it for 24 hours, and uses the reciprocal for CAD/USD. The popup shows the rate's publication date; **Refresh** requests a new rate. These are reference rates, not live quotes or guaranteed card/checkout rates.
@@ -63,7 +71,7 @@ If the service is unavailable, the last valid cached rate remains usable with a 
 
 Expand **Use your own exchange rate**, enter the number of CAD per **1 USD**, and click **Save**. This enables a global custom rate for both conversion directions and all sites. Disable **Custom rate** to return to daily rates. Custom mode does not request daily rates.
 
-Page text, URLs, prices, and preferences are not sent to the rate service. Settings and cached rates stay in `chrome.storage.local`; there is no account, analytics, or cloud sync. The only external request is for the exchange-rate pair, so the rate provider still sees ordinary network information such as the request's IP address. See [Frankfurter's documentation](https://frankfurter.dev/) for provider details.
+Page text, URLs, prices, preferences, and notes are not sent to the rate service. Settings, cached rates, and notes stay in `chrome.storage.local`; there is no account, analytics, or cloud sync. The only external request is for the exchange-rate pair, so the rate provider still sees ordinary network information such as the request's IP address. See [Frankfurter's documentation](https://frankfurter.dev/) for provider details.
 
 The extension requires `activeTab`, `scripting`, `storage`, and `contextMenus`, plus access to the rate API. Persistent access to other websites is optional and requested only when enabling automation. No always-on content script runs across all websites. Context-menu error messages are temporarily stored per tab in `chrome.storage.session` and cleared when viewed, after a successful retry, or on navigation; selected text is not stored there.
 
@@ -91,6 +99,8 @@ Browser tests use a temporary profile, deterministic cached and mocked API rates
 
 Tests cover parsing and formatting; ambiguous/structured currency detection; display modes and restoration; page updates and observer loops; rate caching, invalid data, timeouts, and custom overrides; and Chrome's popup, site permissions, hostname isolation, and background-worker lifecycle. Selection tests cover adjacent markers, partial/split-node replacements, independent undo, stale selections, excluded content, and coexistence with automation. Headless tests pre-approve the localhost hostname through Chrome's extension-management API, then exercise the extension's real optional-permission request, automation, and revocation. Permission denial is simulated at the prompt boundary. Selection browser tests grant fixture access from a test-only button in an extension tab and send the actual content messages; unit tests cover the native-menu handler. Native OS menu clicks and their `activeTab` grant need a manual smoke test in Chrome. Failed browser tests retain traces and screenshots under `test-results/`.
 
-Source layout: `src/background/` handles rates and site registration, `src/content/` handles detection and reversible rendering, `src/popup/` handles controls, and `src/shared/` defines the typed interfaces. Static extension assets are in `public/`; tests and demonstration pages are in `tests/`.
+Notes tests cover ordered saves, immediate popup closure, multiline and Unicode text, clearing, cross-site sharing, storage failures and retries, access restrictions, and persistence across worker and full browser restarts. Browser checks also cover offline/protected-page use and popup layout.
+
+Source layout: `src/background/` handles rates, notes storage, and site registration, `src/content/` handles detection and reversible rendering, `src/popup/` handles controls and the notes editor, and `src/shared/` defines the typed interfaces. Static extension assets are in `public/`; tests and demonstration pages are in `tests/`.
 
 This release is intended for local unpacked installation. Chrome Web Store publication is not configured.

@@ -3,6 +3,7 @@ import {
   type BackgroundRequest, type Reply, type Settings,
 } from '../shared/types';
 import { RateService } from './rates';
+import { NotesService } from './notes';
 import { clearSelectionError, convertContextSelection, registerSelectionMenu } from './context-menu';
 
 async function readSettings(): Promise<Settings> {
@@ -22,6 +23,11 @@ async function readSettings(): Promise<Settings> {
 const rates = new RateService({
   read: async () => (await chrome.storage.local.get('rateCache')).rateCache,
   write: async (rateCache) => { await chrome.storage.local.set({ rateCache }); },
+});
+
+const notes = new NotesService({
+  read: async () => (await chrome.storage.local.get('notes')).notes,
+  write: async text => { await chrome.storage.local.set({ notes: text }); },
 });
 
 let settingsQueue: Promise<unknown> = Promise.resolve();
@@ -52,6 +58,8 @@ async function reconcile(settings: Settings): Promise<void> {
 }
 
 async function handle(request: BackgroundRequest): Promise<unknown> {
+  if (request.type === 'GET_NOTES') return notes.get();
+  if (request.type === 'SAVE_NOTES') { await notes.save(request.text); return null; }
   if (request.type === 'GET_SETTINGS') { await settingsQueue; return readSettings(); }
   if (request.type === 'GET_RATE') {
     await settingsQueue;
@@ -84,8 +92,8 @@ async function handle(request: BackgroundRequest): Promise<unknown> {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message?.channel !== CHANNEL || !['GET_SETTINGS', 'GET_RATE', 'SAVE_PREFERENCES', 'SET_SITE', 'SET_CUSTOM_RATE'].includes(message.type)) return;
-  // Page scripts can request conversion data; preference changes come from our UI.
+  if (message?.channel !== CHANNEL || !['GET_SETTINGS', 'GET_RATE', 'GET_NOTES', 'SAVE_NOTES', 'SAVE_PREFERENCES', 'SET_SITE', 'SET_CUSTOM_RATE'].includes(message.type)) return;
+  // Page scripts can request conversion data; notes and preference changes are UI-only.
   if (!['GET_SETTINGS', 'GET_RATE'].includes(message.type) &&
       !sender.url?.startsWith(chrome.runtime.getURL(''))) {
     respond({ ok: false, error: 'This request must come from the extension popup.' });

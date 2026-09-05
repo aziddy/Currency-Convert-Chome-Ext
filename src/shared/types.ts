@@ -40,6 +40,8 @@ export interface PageStatus {
 
 export type BackgroundRequest =
   | { type: 'GET_SETTINGS' }
+  | { type: 'GET_NOTES' }
+  | { type: 'SAVE_NOTES'; text: string }
   | { type: 'SAVE_PREFERENCES'; preferences: Preferences; hostname: string | null }
   | { type: 'SET_SITE'; hostname: string; enabled: boolean; preferences: Preferences }
   | { type: 'SET_CUSTOM_RATE'; rate: number | null }
