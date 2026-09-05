@@ -1,5 +1,5 @@
 import {
-  backgroundRequest, CHANNEL, DEFAULT_SETTINGS, isPositiveRate, otherCurrency, sitePattern, websiteHostname,
+  backgroundRequest, CHANNEL, DEFAULT_SETTINGS, isPositiveRate, otherCurrency, selectionErrorKey, sitePattern, websiteHostname,
   type ContentRequest, type Currency, type DisplayMode, type EffectiveRate, type PageStatus, type Preferences, type Reply, type Settings,
 } from '../shared/types';
 
@@ -49,7 +49,7 @@ function errorMessage(error: unknown): void { message(error instanceof Error ? e
 
 function updateButtons(): void {
   convert.disabled = busy || !hostname || tabId === null;
-  restore.disabled = busy || !pageStatus?.active;
+  restore.disabled = busy || !(pageStatus?.active || pageStatus?.selectionCount);
   siteToggle.disabled = busy || !hostname;
   refresh.disabled = refreshing || customToggle.checked;
 }
@@ -63,15 +63,16 @@ function showRate(value: EffectiveRate): void {
 
 function showPageStatus(value: PageStatus): void {
   pageStatus = value;
-  if (value.rate) showRate(value.rate);
+  if (value.active && value.rate) showRate(value.rate);
+  const selections = value.selectionCount ? `${value.selectionCount} selected ${value.selectionCount === 1 ? 'amount' : 'amounts'} converted.` : '';
   if (value.error) message(value.error, 'error');
   else if (value.active) {
     const count = `${value.count} ${value.count === 1 ? 'price' : 'prices'} ${value.preferences?.display === 'hover' ? 'ready on hover' : 'converted'}.`;
     const detected = value.preferences?.sourceMode === 'auto' && value.detectedSource ? ` Detected ${value.detectedSource}.` : '';
     const ambiguous = value.ambiguous ? ` ${value.ambiguous} uncertain $ ${value.ambiguous === 1 ? 'price skipped' : 'prices skipped'}; choose a source manually to convert ${value.ambiguous === 1 ? 'it' : 'them'}.` : '';
     const empty = !value.count && !value.ambiguous ? ' No prices need conversion to the selected currency.' : '';
-    message(count + detected + ambiguous + empty + (value.rate?.stale ? ' Using a cached rate.' : ''), value.ambiguous || value.rate?.stale ? 'warning' : 'info');
-  }
+    message(count + detected + ambiguous + empty + (selections ? ` ${selections}` : '') + (value.rate?.stale ? ' Using a cached rate.' : ''), value.ambiguous || value.rate?.stale ? 'warning' : 'info');
+  } else if (selections) message(`${selections} Restore originals to undo.`, 'info');
   updateButtons();
 }
 
@@ -149,7 +150,7 @@ siteToggle.addEventListener('change', async () => {
     settings = await backgroundRequest<Settings>({ type: 'SET_SITE', hostname, enabled, preferences: preferences() });
     if (enabled) { await ensureContent(); showPageStatus(await toPage({ type: 'APPLY', preferences: preferences(), automatic: true })); }
     else {
-      try { showPageStatus(await toPage({ type: 'RESTORE' })); } catch { pageStatus = null; }
+      try { showPageStatus(await toPage({ type: 'STOP_PAGE' })); } catch { pageStatus = null; }
       message('Automatic conversion is off for this site.');
     }
   } catch (error) { siteToggle.checked = Boolean(settings.sites[hostname]); errorMessage(error); }
@@ -201,12 +202,21 @@ async function initialize(): Promise<void> {
     updateButtons();
     await refreshRate();
     if (!customInput.value && rate) customInput.value = String(rate.usdToCad);
+    if (tabId !== null) {
+      const key = selectionErrorKey(tabId);
+      const savedError = (await chrome.storage.session.get(key))[key];
+      if (typeof savedError === 'string') {
+        message(savedError, 'error');
+        await chrome.storage.session.remove(key);
+        await chrome.action.setBadgeText({ tabId, text: '' });
+      }
+    }
   } catch (error) { errorMessage(error); }
 }
 
 // The popup lives only while open; this also reports prices added by infinite scroll.
 const poll = setInterval(() => {
-  if (busy || !hostname || !pageStatus?.active) return;
+  if (busy || !hostname || !(pageStatus?.active || pageStatus?.selectionCount)) return;
   void toPage({ type: 'STATUS' }).then(showPageStatus).catch(() => {
     pageStatus = null; updateButtons(); message('The page changed. Open the extension again to convert it.');
   });

@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "description": "Convert page prices between USD and CAD, with daily rates, custom rates, and per-site preferences.",
   "minimum_chrome_version": "120",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
   "host_permissions": ["https://api.frankfurter.dev/*"],
   "optional_host_permissions": ["*://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },

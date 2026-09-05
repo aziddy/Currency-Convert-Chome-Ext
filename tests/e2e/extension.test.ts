@@ -2,6 +2,7 @@ import { test, expect, chromium, type BrowserContext, type Page, type Worker, ty
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { CHANNEL, DEFAULT_SETTINGS, type ContentRequest, type PageStatus, type Reply } from '../../src/shared/types';
 
 const extensionPath = path.resolve('dist');
 let context: BrowserContext;
@@ -71,6 +72,143 @@ async function grantTestSiteAccess(): Promise<void> {
   }, extensionId);
   await manager.close();
 }
+
+async function prepareSelectionContent(): Promise<number> {
+  // Native OS context-menu clicks are not exposed by headless CDP. Unit tests cover the
+  // menu handler; here grant the fixture origin and exercise its real content-message path.
+  // Grant from a test-only button in an extension tab, without invoking the toolbar action
+  // or Convert page. The explicit click supplies Chrome's required permission gesture.
+  await grantTestSiteAccess();
+  const permissionView = await context.newPage();
+  await permissionView.goto(`chrome-extension://${extensionId}/popup.html`);
+  await permissionView.evaluate(() => {
+    const button = document.createElement('button'); button.id = 'test-grant'; button.textContent = 'Grant fixture access';
+    button.onclick = async () => {
+      button.dataset.granted = String(await chrome.permissions.request({ origins: ['*://127.0.0.1/*'] }));
+    };
+    document.body.append(button);
+  });
+  await permissionView.locator('#test-grant').click();
+  await expect(permissionView.locator('#test-grant')).toHaveAttribute('data-granted', 'true');
+  await permissionView.close();
+  await shop.bringToFront();
+  return worker.evaluate(async url => {
+    const tab = (await chrome.tabs.query({})).find(tab => tab.url === url)!;
+    await chrome.scripting.insertCSS({ target: { tabId: tab.id! }, files: ['content.css'] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id! }, files: ['content.js'] });
+    return tab.id!;
+  }, shop.url());
+}
+
+async function selectAmount(selector: string, start?: number, end?: number): Promise<string> {
+  return shop.locator(selector).evaluate((element, offsets) => {
+    const range = document.createRange();
+    if (offsets.start === undefined) range.selectNodeContents(element);
+    else { range.setStart(element.firstChild!, offsets.start); range.setEnd(element.firstChild!, offsets.end!); }
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    return range.toString();
+  }, { start, end });
+}
+
+async function selectionMessage(tabId: number, request: ContentRequest): Promise<Reply<PageStatus>> {
+  return worker.evaluate(async ({ tabId, channel, request }) =>
+    chrome.tabs.sendMessage(tabId, { channel, ...request }, { frameId: 0 }), { tabId, channel: CHANNEL, request });
+}
+
+test('selected amounts replace independently, preserve other prices, and restore through the popup', async () => {
+  const tabId = await prepareSelectionContent();
+  let reply = await selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#simple', 1, 6),
+    preferences: { ...DEFAULT_SETTINGS.preferences, display: 'hover' } });
+  expect(reply).toMatchObject({ ok: true, value: { active: false, count: 0, selectionCount: 1 } });
+  await expect(shop.locator('#simple')).toHaveText(/≈ CAD\s+33\.60/);
+  await expect(shop.locator('#split')).toHaveText('US$89.99');
+  reply = await selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#split'),
+    preferences: DEFAULT_SETTINGS.preferences });
+  expect(reply).toMatchObject({ ok: true, value: { active: false, selectionCount: 2 } });
+  await expect(shop.locator('#split')).toHaveText(/≈ CAD\s+125\.99/);
+  await expect(shop.locator('#sentence')).toHaveText('Shipping is USD 5.00. Free above USD 100.00.');
+  popup = await openPopup();
+  await expect(popup.locator('#status')).toContainText('2 selected amounts converted');
+  await expect(popup.locator('#restore')).toBeEnabled();
+  await popup.locator('input[value=beside]').check();
+  await popup.locator('#swap').click();
+  await popup.locator('summary').click();
+  await popup.locator('#custom-rate').fill('1.5');
+  await popup.locator('#custom-form button').click();
+  // Let the one-second status poll run; frozen selection rates must not overwrite the current rate UI.
+  await popup.waitForTimeout(1100);
+  await expect(popup.locator('#rate-value')).toHaveText('1 USD = 1.5 CAD');
+  await expect(shop.locator('#simple')).toHaveText(/≈ CAD\s+33\.60/);
+  await expect(shop.locator('#sentence')).toHaveText('Shipping is USD 5.00. Free above USD 100.00.');
+  await popup.locator('#restore').click();
+  await expect(shop.locator('#simple')).toHaveText('$24.00');
+  await expect(shop.locator('#split')).toHaveText('US$89.99');
+});
+
+test('selection conversion fetches a first-use rate and protects against a changed selection', async () => {
+  const tabId = await prepareSelectionContent();
+  await worker.evaluate(() => chrome.storage.local.remove('rateCache'));
+  let release!: () => void;
+  const paused = new Promise<void>(resolve => { release = resolve; });
+  let requested!: () => void;
+  const started = new Promise<void>(resolve => { requested = resolve; });
+  await context.route('https://api.frankfurter.dev/v2/rate/USD/CAD', async route => {
+    requested(); await paused;
+    await route.fulfill({ json: { base: 'USD', quote: 'CAD', date: '2026-09-04', rate: 1.5 } });
+  });
+  const result = selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#simple'),
+    preferences: DEFAULT_SETTINGS.preferences });
+  await started;
+  await selectAmount('#split'); release();
+  expect(await result).toMatchObject({ ok: false, error: expect.stringContaining('selection changed') });
+  await expect(shop.locator('#simple')).toHaveText('$24.00');
+  expect(await selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#simple'),
+    preferences: DEFAULT_SETTINGS.preferences })).toMatchObject({ ok: true, value: { selectionCount: 1 } });
+  await expect(shop.locator('#simple')).toHaveText(/≈ CAD\s+36\.00/);
+});
+
+test('selection errors leave the page unchanged and display a dismissible notice', async () => {
+  const tabId = await prepareSelectionContent();
+  await worker.evaluate(() => chrome.storage.local.remove('rateCache'));
+  await context.route('https://api.frankfurter.dev/v2/rate/USD/CAD', route => route.abort());
+  const result = await selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#simple'),
+    preferences: DEFAULT_SETTINGS.preferences });
+  expect(result).toMatchObject({ ok: false, error: expect.stringContaining('Could not load an exchange rate') });
+  await expect(shop.locator('#simple')).toHaveText('$24.00');
+  // The menu handler forwards errors to this same notification message.
+  if (!result.ok) await selectionMessage(tabId, { type: 'SELECTION_ERROR', error: result.error });
+  await expect(shop.locator('[data-pc-notice]')).toContainText('Could not load an exchange rate');
+  await shop.locator('[data-pc-notice] button').click();
+  await expect(shop.locator('[data-pc-notice]')).toHaveCount(0);
+});
+
+test('selection undo survives a background worker restart', async () => {
+  const checkMenu = () => worker.evaluate(() => new Promise<void>((resolve, reject) => {
+    chrome.contextMenus.update('convert-selected-amount', { enabled: true }, () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message)); else resolve();
+    });
+  }));
+  await checkMenu();
+  const tabId = await prepareSelectionContent();
+  expect(await selectionMessage(tabId, { type: 'CONVERT_SELECTION', selectionText: await selectAmount('#simple'),
+    preferences: DEFAULT_SETTINGS.preferences })).toMatchObject({ ok: true });
+  popup = await openPopup();
+  const session = await context.newCDPSession(popup);
+  await session.send('ServiceWorker.enable');
+  await session.send('ServiceWorker.stopAllWorkers');
+  await context.route('https://api.frankfurter.dev/v2/rate/USD/CAD', route => route.fulfill({
+    json: { base: 'USD', quote: 'CAD', date: '2026-09-04', rate: 1.6 },
+  }));
+  await popup.locator('#refresh').click();
+  await expect(popup.locator('#rate-value')).toHaveText('1 USD = 1.6 CAD');
+  // Chromium may resume the existing worker target rather than emit a new target event.
+  worker = context.serviceWorkers().find(value => value.url().includes(extensionId))!;
+  await checkMenu();
+  await expect(shop.locator('#simple')).toHaveText(/≈ CAD\s+33\.60/);
+  await popup.locator('#restore').click();
+  await expect(shop.locator('#simple')).toHaveText('$24.00');
+  await session.detach();
+});
 
 test('a fresh install fetches and caches a daily rate through the background worker', async () => {
   await worker.evaluate(() => chrome.storage.local.remove('rateCache'));

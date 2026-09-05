@@ -3,6 +3,7 @@ import {
   type BackgroundRequest, type Reply, type Settings,
 } from '../shared/types';
 import { RateService } from './rates';
+import { clearSelectionError, convertContextSelection, registerSelectionMenu } from './context-menu';
 
 async function readSettings(): Promise<Settings> {
   const stored = await chrome.storage.local.get('settings');
@@ -101,3 +102,15 @@ const syncSites = () => { void serial(async () => reconcile(await readSettings()
 chrome.runtime.onInstalled.addListener(syncSites);
 chrome.runtime.onStartup.addListener(syncSites);
 chrome.permissions.onRemoved.addListener(syncSites);
+const syncMenu = () => { void registerSelectionMenu().catch(console.error); };
+chrome.runtime.onInstalled.addListener(syncMenu);
+chrome.runtime.onStartup.addListener(syncMenu);
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  void convertContextSelection(info, tab, async () => { await settingsQueue; return readSettings(); }).catch(console.error);
+});
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === 'loading') void clearSelectionError(tabId).catch(() => undefined);
+});
+chrome.tabs.onRemoved.addListener(tabId => {
+  void clearSelectionError(tabId).catch(() => undefined);
+});

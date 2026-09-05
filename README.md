@@ -41,6 +41,20 @@ Automatic detection first uses currency metadata associated with the price, then
 
 Site preferences cover the exact hostname on HTTP and HTTPS, including all paths and ports. `www.example.com` and `shop.example.com` are separate sites. Disabling site automation restores its active automatic conversions across open tabs and removes the optional access grant. A permission revoked in Chrome also stops automation. Settings for other sites remain independent.
 
+## Convert a selected number
+
+Select one number or USD/CAD price in displayed webpage text, right-click, and choose **Convert selected amount**. There is no need to open the popup or convert the rest of the page first.
+
+The action uses this hostname's saved preferences, otherwise the global popup preferences, and the same daily or custom exchange rate. Explicit USD/CAD labels take precedence. In automatic-detection mode, reliable currency metadata or page labels are used; when the source is uncertain, this explicit action falls back to the saved source currency. An amount already in the target currency is left unchanged with an explanation.
+
+Only the selected amount is replaced, using an explicit target code and approximation marker such as `≈ CAD 140.00`, regardless of the popup's display mode. A directly adjoining currency marker is included when it belongs to the same price, including simple split inline markup. Other text, prices, elements, and event listeners remain intact. Hover or keyboard-focus the conversion to inspect the original.
+
+Selected conversions have a separate count in the popup. They retain the rate and direction used when clicked, even when page-conversion settings or rates change. **Restore originals** undoes both selected and whole-page conversions; turning off site automation only restores the automatic page conversions. Reloading the website also clears selections. If the website changes the converted text, its newer content takes precedence over saved undo data.
+
+Select the complete amount: multiple amounts, partial digits, unsupported currencies, and unrelated text are rejected. Inputs, editable fields, code, hidden text, iframes, shadow DOM, PDFs, and Chrome-protected pages are not supported. Text that already contains a tracked conversion must be restored before converting it again. If a selection changes while a rate is being fetched, nothing is replaced. Errors appear in a dismissible page notice; if Chrome prevents page access, an **!** badge directs you to the popup for an explanation.
+
+The menu appears only for text selections on HTTP/HTTPS pages and validates the amount when clicked. It adds the `contextMenus` permission and uses temporary `activeTab` access from the menu click, not always-on website access or a new settings toggle.
+
 ## Exchange rates and privacy
 
 Daily rates come from [Frankfurter's public API](https://frankfurter.dev/). The extension fetches one USD/CAD pair, caches it for 24 hours, and uses the reciprocal for CAD/USD. The popup shows the rate's publication date; **Refresh** requests a new rate. These are reference rates, not live quotes or guaranteed card/checkout rates.
@@ -51,7 +65,7 @@ Expand **Use your own exchange rate**, enter the number of CAD per **1 USD**, an
 
 Page text, URLs, prices, and preferences are not sent to the rate service. Settings and cached rates stay in `chrome.storage.local`; there is no account, analytics, or cloud sync. The only external request is for the exchange-rate pair, so the rate provider still sees ordinary network information such as the request's IP address. See [Frankfurter's documentation](https://frankfurter.dev/) for provider details.
 
-The extension requires `activeTab`, `scripting`, and `storage`, plus access to the rate API. Access to other websites is optional and requested only when enabling automation. No always-on content script runs across all websites.
+The extension requires `activeTab`, `scripting`, `storage`, and `contextMenus`, plus access to the rate API. Persistent access to other websites is optional and requested only when enabling automation. No always-on content script runs across all websites. Context-menu error messages are temporarily stored per tab in `chrome.storage.session` and cleared when viewed, after a successful retry, or on navigation; selected text is not stored there.
 
 ## Supported content and limits
 
@@ -75,7 +89,7 @@ npm run test:e2e    # Build, then test the actual extension in isolated Chromium
 
 Browser tests use a temporary profile, deterministic cached and mocked API rates, a localhost fixture server, and Chrome's actual extension APIs. A fresh-install test exercises the background worker's native network request without a prefilled cache. They never use your regular Chrome profile. If Chromium is installed in a custom location, set `PLAYWRIGHT_BROWSERS_PATH` to that browser-cache directory when running the tests. Port 4173 must be available.
 
-Tests cover parsing and formatting; ambiguous/structured currency detection; display modes and restoration; page updates and observer loops; rate caching, invalid data, timeouts, and custom overrides; and Chrome's popup, site permissions, hostname isolation, and background-worker lifecycle. Headless tests pre-approve the localhost hostname through Chrome's extension-management API, then exercise the extension's real optional-permission request, automation, and revocation. Permission denial is simulated at the prompt boundary. Failed browser tests retain traces and screenshots under `test-results/`.
+Tests cover parsing and formatting; ambiguous/structured currency detection; display modes and restoration; page updates and observer loops; rate caching, invalid data, timeouts, and custom overrides; and Chrome's popup, site permissions, hostname isolation, and background-worker lifecycle. Selection tests cover adjacent markers, partial/split-node replacements, independent undo, stale selections, excluded content, and coexistence with automation. Headless tests pre-approve the localhost hostname through Chrome's extension-management API, then exercise the extension's real optional-permission request, automation, and revocation. Permission denial is simulated at the prompt boundary. Selection browser tests grant fixture access from a test-only button in an extension tab and send the actual content messages; unit tests cover the native-menu handler. Native OS menu clicks and their `activeTab` grant need a manual smoke test in Chrome. Failed browser tests retain traces and screenshots under `test-results/`.
 
 Source layout: `src/background/` handles rates and site registration, `src/content/` handles detection and reversible rendering, `src/popup/` handles controls, and `src/shared/` defines the typed interfaces. Static extension assets are in `public/`; tests and demonstration pages are in `tests/`.
 

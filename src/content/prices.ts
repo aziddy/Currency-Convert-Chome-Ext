@@ -9,7 +9,8 @@ export interface PriceMatch {
 }
 
 const CODES = 'USD|CAD|AUD|NZD|HKD|MXN|SGD|TWD|EUR|GBP|JPY|CNY|RMB|INR|KRW|CHF|SEK|NOK|DKK|BRL|ZAR|ARS|CLP|COP|PHP';
-const MARKER = `(?:(?:${CODES})\\b(?:\\s*\\$)?|(?:US|CA|AU|NZ|HK|MX|SG|NT|C|A|S|R)\\s*\\$|\\$(?:\\s*(?:${CODES}|US|CA)\\b)?|[€£¥₹₩₽])`;
+export const CURRENCY_MARKER = `(?:(?:${CODES})\\b(?:\\s*\\$)?|(?:US|CA|AU|NZ|HK|MX|SG|NT|C|A|S|R)\\s*\\$|\\$(?:\\s*(?:${CODES}|US|CA)\\b)?|[€£¥₹₩₽])`;
+const MARKER = CURRENCY_MARKER;
 const NUMBER = '(?:\\d{1,3}(?:[., \\u00a0\\u202f]\\d{3})+|\\d+)(?:[.,]\\d{1,2})?';
 const SIGNED = `(?:[-−+]\\s*)?${NUMBER}`;
 const pattern = () => new RegExp(

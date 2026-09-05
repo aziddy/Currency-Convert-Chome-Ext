@@ -1,16 +1,17 @@
-import { type Currency, type EffectiveRate, type Preferences } from '../shared/types';
+import { type Currency, type DisplayMode, type EffectiveRate, type Preferences } from '../shared/types';
 import { associatedCurrency, metadataCurrencies, uniqueCurrency } from './detection';
 import { findPrices, formatConversion, type PriceMatch } from './prices';
+import { captureSelection, CONVERTER_UI, EXCLUDED_CONTENT, selectionSource, validateSelection, type SelectionSnapshot } from './selection';
 
-const UI = 'data-price-converter-ui';
-const EXCLUDED = `script, style, noscript, textarea, input, select, option, pre, code, kbd, samp, svg, math, [contenteditable]:not([contenteditable="false"]), [hidden], [aria-hidden="true"], [${UI}]`;
+const UI = CONVERTER_UI;
+const EXCLUDED = EXCLUDED_CONTENT;
 const INLINE = new Set(['SPAN', 'B', 'STRONG', 'EM', 'I', 'SMALL', 'SUP', 'SUB']);
 
 interface TextPatch { node: Text; original: string; written: string; segments: Text[] }
 interface Region { range: Range; label: string; focus: HTMLElement }
 interface Run { nodes: Text[]; element: Element; text: string; matches: PriceMatch[] }
-interface RecordEntry { patches: TextPatch[]; extras: Node[]; regions: Region[]; count: number }
-export interface ScanStatus { count: number; ambiguous: number; detectedSource: Currency | null }
+interface RecordEntry { patches: TextPatch[]; extras: Node[]; regions: Region[]; count: number; kind: 'page' | 'selection' }
+export interface ScanStatus { count: number; selectionCount: number; ambiguous: number; detectedSource: Currency | null }
 
 export class ConversionEngine {
   private entries = new Set<RecordEntry>();
@@ -43,7 +44,8 @@ export class ConversionEngine {
 
   apply(preferences: Preferences, rate: EffectiveRate): ScanStatus {
     this.stopObserving();
-    this.restoreEntries();
+    this.pruneSelections();
+    this.restoreEntries('page');
     this.preferences = preferences;
     this.rate = rate;
     this.ambiguity.clear();
@@ -62,6 +64,50 @@ export class ConversionEngine {
     return this.status();
   }
 
+  stopPageConversion(): ScanStatus {
+    this.stopObserving();
+    this.preferences = null;
+    this.restoreEntries('page');
+    this.ambiguity.clear();
+    this.detectedSource = null;
+    this.observe();
+    return this.status();
+  }
+
+  captureSelection(expectedText: string): SelectionSnapshot {
+    this.schedule(this.observer.takeRecords());
+    if (this.timer) this.flush();
+    return captureSelection(this.document, expectedText, node => this.owned.has(node));
+  }
+
+  applySelection(snapshot: SelectionSnapshot, preferences: Preferences, rate: EffectiveRate): ScanStatus {
+    this.schedule(this.observer.takeRecords());
+    if (this.timer) this.flush();
+    validateSelection(snapshot);
+    // Recheck visibility, ownership, and eligibility after the asynchronous rate request.
+    const current = captureSelection(this.document, snapshot.selectedText, node => this.owned.has(node));
+    if (current.text !== snapshot.text || current.parts.length !== snapshot.parts.length ||
+        current.parts.some((part, i) => part.node !== snapshot.parts[i]!.node || part.start !== snapshot.parts[i]!.start || part.end !== snapshot.parts[i]!.end)) {
+      throw new Error('The selection changed. Select the amount again and retry.');
+    }
+    const source = selectionSource(current, preferences, () => new Set(this.runs(this.document.body)
+      .flatMap(run => run.matches.flatMap(match => match.currency ? [match.currency] : []))));
+    if (source === preferences.target) throw new Error(`This amount is already in ${preferences.target}. Change the target currency to convert it.`);
+    const converted = formatConversion(snapshot.amount, source, preferences.target, rate.usdToCad,
+      this.document.documentElement.lang.toLowerCase().startsWith('fr') ? 'fr-CA' : 'en-CA');
+    this.stopObserving();
+    // Split only boundary text nodes. Elements and their event listeners remain in place.
+    const nodes = snapshot.parts.map(part => {
+      if (part.end < part.node.length) part.node.splitText(part.end);
+      return part.start ? part.node.splitText(part.start) : part.node;
+    });
+    const match: PriceMatch = { start: 0, end: snapshot.text.length, text: snapshot.text, amount: snapshot.amount, currency: source };
+    this.render({ nodes, element: snapshot.element, text: snapshot.text, matches: [match] },
+      [{ match, converted }], 'replace', 'selection', rate);
+    this.observe();
+    return this.status();
+  }
+
   dispose(): void {
     this.restore();
     this.disposed = true;
@@ -73,13 +119,17 @@ export class ConversionEngine {
   }
 
   status(): ScanStatus {
-    let count = 0, ambiguous = 0;
-    for (const entry of this.entries) if (entry.patches.some(patch => patch.node.isConnected)) count += entry.count;
+    let count = 0, selectionCount = 0, ambiguous = 0;
+    this.pruneSelections();
+    for (const entry of this.entries) if (entry.patches.some(patch => patch.node.isConnected)) {
+      if (entry.kind === 'selection') selectionCount += entry.count;
+      else count += entry.count;
+    }
     for (const [node, number] of this.ambiguity) {
       if (node.isConnected) ambiguous += number;
       else this.ambiguity.delete(node);
     }
-    const status = { count, ambiguous, detectedSource: this.detectedSource };
+    const status = { count, selectionCount, ambiguous, detectedSource: this.detectedSource };
     this.onStatus(status);
     return status;
   }
@@ -93,7 +143,7 @@ export class ConversionEngine {
   }
 
   private observe(): void {
-    if (!this.disposed && this.preferences) this.observer.observe(this.document.documentElement, {
+    if (!this.disposed && (this.preferences || this.entries.size)) this.observer.observe(this.document.documentElement, {
       subtree: true, childList: true, characterData: true, attributes: true,
       attributeFilter: ['content', 'value', 'itemprop', 'itemscope', 'hidden', 'aria-hidden', 'class', 'style', 'contenteditable'],
     });
@@ -114,23 +164,25 @@ export class ConversionEngine {
 
   private flush(): void {
     this.timer = null;
-    if (!this.preferences) return;
     this.schedule(this.observer.takeRecords());
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.observer.disconnect();
     this.hideTooltip();
+    this.pruneSelections();
     const roots = [...this.dirty].filter(node => node.isConnected);
     this.dirty.clear();
     const full = this.needsFullScan;
     this.needsFullScan = false;
+    if (!this.preferences) { this.observe(); this.status(); return; }
     if (full) {
-      this.restoreEntries();
+      this.restoreEntries('page');
       this.ambiguity.clear();
       this.scan(this.document.body, true);
     } else {
       // Restore affected runs before rescanning; unchanged branches retain their conversions.
       for (const entry of this.entries) {
+        if (entry.kind === 'selection') continue;
         if (entry.patches.some(patch => !patch.node.isConnected || roots.some(root => root.contains(patch.node)))) {
           this.restoreEntry(entry);
           this.entries.delete(entry);
@@ -222,8 +274,9 @@ export class ConversionEngine {
     }
   }
 
-  private render(run: Run, prices: Array<{ match: PriceMatch; converted: string }>): void {
-    const entry: RecordEntry = { patches: run.nodes.map(node => ({ node, original: node.data, written: node.data, segments: [node] })), extras: [], regions: [], count: prices.length };
+  private render(run: Run, prices: Array<{ match: PriceMatch; converted: string }>, display: DisplayMode = this.preferences!.display,
+    kind: RecordEntry['kind'] = 'page', rate: EffectiveRate = this.rate!): void {
+    const entry: RecordEntry = { patches: run.nodes.map(node => ({ node, original: node.data, written: node.data, segments: [node] })), extras: [], regions: [], count: prices.length, kind };
     const offsets: number[] = [];
     let cursor = 0;
     for (const patch of entry.patches) { offsets.push(cursor); cursor += patch.original.length; this.owned.add(patch.node); }
@@ -234,8 +287,8 @@ export class ConversionEngine {
       }
       return { index: 0, offset: 0 };
     };
-    const label = (price: typeof prices[number]) => `Original: ${price.match.text.trim()} · ${price.converted}${this.rate?.stale ? ' · cached rate' : ''}`;
-    if (this.preferences!.display === 'replace') {
+    const label = (price: typeof prices[number]) => `Original: ${price.match.text.trim()} · ${price.converted}${rate?.stale ? ' · cached rate' : ''}`;
+    if (display === 'replace') {
       for (let i = 0; i < entry.patches.length; i++) {
         const patch = entry.patches[i]!;
         const start = offsets[i]!, end = start + patch.original.length;
@@ -261,7 +314,7 @@ export class ConversionEngine {
           this.addRegion(entry, range, region.label);
         }
       }
-    } else if (this.preferences!.display === 'beside') {
+    } else if (display === 'beside') {
       // Splits retain the site's original Text node. Restoration rejoins our own tails.
       for (const price of [...prices].reverse()) {
         const end = position(price.match.end, true);
@@ -313,10 +366,25 @@ export class ConversionEngine {
     for (const extra of entry.extras) { extra.parentNode?.removeChild(extra); this.owned.delete(extra); }
   }
 
-  private restoreEntries(): void {
+  private pruneSelections(): void {
+    for (const entry of this.entries) {
+      if (entry.kind !== 'selection' || entry.patches.every(patch => patch.node.isConnected && patch.node.data === patch.written)) continue;
+      // A site's newer text wins. Discard stale undo data without rewriting any of it.
+      for (const patch of entry.patches) this.owned.delete(patch.node);
+      for (const extra of entry.extras) extra.parentNode?.removeChild(extra);
+      if (entry.regions.includes(this.hovering!)) this.hideTooltip();
+      this.entries.delete(entry);
+    }
+  }
+
+  private restoreEntries(kind?: RecordEntry['kind']): void {
     this.hideTooltip();
-    for (const entry of this.entries) this.restoreEntry(entry);
-    this.entries.clear();
+    this.pruneSelections();
+    for (const entry of this.entries) {
+      if (kind && entry.kind !== kind) continue;
+      this.restoreEntry(entry);
+      this.entries.delete(entry);
+    }
   }
 
   private pointerMove = (event: PointerEvent): void => {

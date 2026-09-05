@@ -31,3 +31,33 @@
   pointer-events: none !important;
 }
 [data-price-converter-ui][data-pc-tooltip][hidden] { display: none !important; }
+
+[data-price-converter-ui][data-pc-notice] {
+  all: initial;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  bottom: 20px !important;
+  right: 20px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+  max-width: min(440px, calc(100vw - 40px)) !important;
+  padding: 16px !important;
+  border: 1px solid #d4e4d9 !important;
+  border-radius: 10px !important;
+  background: #163a2b !important;
+  color: #fff !important;
+  font: 14px/1.5 system-ui, sans-serif !important;
+  box-shadow: 0 4px 18px #0003 !important;
+}
+[data-price-converter-ui][data-pc-notice] button {
+  all: initial;
+  font: 600 13px/1.5 system-ui, sans-serif !important;
+  color: #d6f6cc !important;
+  cursor: pointer !important;
+  padding: 6px !important;
+  border: 1px solid currentColor !important;
+  border-radius: 4px !important;
+}
+[data-price-converter-ui][data-pc-notice] button:focus-visible { outline: 2px solid #fff !important; outline-offset: 3px !important; }

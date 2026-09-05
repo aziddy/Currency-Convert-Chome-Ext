@@ -30,6 +30,7 @@ export interface PageStatus {
   active: boolean;
   automatic: boolean;
   count: number;
+  selectionCount: number;
   ambiguous: number;
   detectedSource: Currency | null;
   preferences: Preferences | null;
@@ -46,11 +47,15 @@ export type BackgroundRequest =
 
 export type ContentRequest =
   | { type: 'APPLY'; preferences: Preferences; automatic: boolean }
+  | { type: 'CONVERT_SELECTION'; selectionText: string; preferences: Preferences }
+  | { type: 'SELECTION_ERROR'; error: string }
   | { type: 'RESTORE' }
+  | { type: 'STOP_PAGE' }
   | { type: 'STATUS' };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: string };
 export const CHANNEL = 'usd-cad-price-converter';
+export const selectionErrorKey = (tabId: number): string => `selection-error:${tabId}`;
 
 export const DEFAULT_PREFERENCES: Preferences = {
   source: 'USD', target: 'CAD', sourceMode: 'manual', display: 'replace',
