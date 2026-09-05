@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Price Converter</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="header">
+      <img src="icons/48.png" width="36" height="36" alt="">
+      <div><h1>Price Converter</h1><p>A familiar currency. Anywhere.</p></div>
+      <span class="pair-tag">USD / CAD</span>
+    </header>
+
+    <section class="conversion-card" aria-label="Conversion preferences">
+      <div class="currency-row">
+        <label class="currency-field"><span>FROM</span>
+          <select id="source" aria-label="Source currency"><option value="USD">USD</option><option value="CAD">CAD</option></select>
+        </label>
+        <button id="swap" class="swap" type="button" aria-label="Swap currencies" title="Swap currencies">⇄</button>
+        <label class="currency-field"><span>TO</span>
+          <select id="target" aria-label="Target currency"><option value="CAD">CAD</option><option value="USD">USD</option></select>
+        </label>
+      </div>
+      <label class="switch-row detect-row"><span>Detect source currency <small id="source-hint">Unlabeled $ prices are treated as USD.</small></span><input id="detect" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+    </section>
+
+    <fieldset class="display-group">
+      <legend>HOW PRICES APPEAR</legend>
+      <div class="display-options">
+        <label><input type="radio" name="display" value="replace" checked><span><b aria-hidden="true">$ → $</b>Replace</span></label>
+        <label><input type="radio" name="display" value="beside"><span><b aria-hidden="true">$ + $</b>Beside</span></label>
+        <label><input type="radio" name="display" value="hover"><span><b aria-hidden="true">$ ⤴</b>On hover</span></label>
+      </div>
+      <p id="display-hint" class="hint">Hover or focus a converted price to see the original.</p>
+    </fieldset>
+
+    <section class="rate-section" aria-label="Exchange rate">
+      <div class="rate-line"><span id="rate-value">Loading exchange rate…</span><button id="refresh" class="text-button" type="button" aria-label="Refresh exchange rate">↻ Refresh</button></div>
+      <p id="rate-info" class="hint">Daily reference rate · Frankfurter</p>
+      <details id="custom-details">
+        <summary>Use your own exchange rate</summary>
+        <label class="switch-row custom-switch"><span>Custom rate</span><input id="custom-enabled" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+        <form id="custom-form" class="custom-form">
+          <label for="custom-rate">1 USD =</label><input id="custom-rate" type="number" inputmode="decimal" min="0.000001" step="any" placeholder="1.3800" aria-label="Canadian dollars per US dollar"><span>CAD</span><button class="small-button" type="submit">Save</button>
+        </form>
+        <p id="custom-feedback" class="hint" role="status"></p>
+      </details>
+    </section>
+
+    <section class="site-section" aria-label="Website preferences">
+      <label class="switch-row"><span>Always convert this site <small id="site-name">Checking this page…</small></span><input id="auto-site" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <p class="hint">Remembers this site's currencies and display mode.</p>
+    </section>
+
+    <div class="actions"><button id="convert" class="primary-button" type="button" disabled>Convert page <span aria-hidden="true">↗</span></button><button id="restore" class="restore-button" type="button" disabled>Restore originals</button></div>
+    <p id="status" class="status" role="status" aria-live="polite">Getting ready…</p>
+    <footer>Estimates only · Your bank's final rate may differ.</footer>
+  </main>
+</body>
+</html>

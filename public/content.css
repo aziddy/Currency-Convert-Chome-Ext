@@ -1,0 +1,33 @@
+[data-price-converter-ui][data-pc-badge] {
+  font-size: .85em !important;
+  font-weight: 500 !important;
+  opacity: .85 !important;
+  white-space: nowrap !important;
+}
+[data-price-converter-ui][data-pc-focus] {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+  border: 0 !important;
+}
+[data-price-converter-ui][data-pc-tooltip] {
+  all: initial;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  display: block !important;
+  max-width: min(320px, calc(100vw - 16px)) !important;
+  padding: 10px 12px !important;
+  border: 1px solid #d4e4d9 !important;
+  border-radius: 8px !important;
+  background: #163a2b !important;
+  color: #fff !important;
+  font: 13px/1.5 system-ui, sans-serif !important;
+  box-shadow: 0 4px 18px #0003 !important;
+  pointer-events: none !important;
+}
+[data-price-converter-ui][data-pc-tooltip][hidden] { display: none !important; }

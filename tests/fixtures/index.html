@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta property="product:price:currency" content="USD"><title>North Supply · Converter test shop</title><link rel="stylesheet" href="demo.css"><script src="demo.js" defer></script></head>
+<body>
+  <header><a href="/" class="brand">NORTH / SUPPLY</a><nav><a href="ambiguous.html">Unlabeled prices</a><a href="french.html">Français</a><span>Test shop</span></nav></header>
+  <main>
+    <p class="eyebrow">FEWER THINGS. BETTER THINGS.</p><h1>Made for the everyday.</h1>
+    <p class="intro">A small collection, thoughtfully chosen. This local test page contains USD prices, CAD prices, split markup, and live updates.</p>
+    <section class="products" id="products">
+      <article><div class="product-image mug" aria-hidden="true">◡</div><p class="category">THE MORNING RITUAL</p><h2>Everyday cup</h2><p class="price" id="simple">$24.00</p><button id="sale">Apply sale price</button></article>
+      <article><div class="product-image bag" aria-hidden="true">⌑</div><p class="category">TAKE THE LONG WAY</p><h2>Canvas weekender</h2><p class="price" id="split"><span>US$</span><strong>89</strong><sup>.99</sup></p><button id="add">Load another product</button></article>
+      <article><div class="product-image lamp" aria-hidden="true">⌂</div><p class="category">A LITTLE WARMTH</p><h2>Reading light</h2><p class="price" id="canadian">CAD 120.00</p><a id="product-link" href="#details">Product details ↗</a></article>
+    </section>
+    <section class="checks" id="details"><h2>Other page content</h2><p id="sentence">Shipping is USD 5.00. Free above USD 100.00.</p><p id="foreign">Australian store: AUD $35.00</p><p id="refund">Refund: -$12.50</p><p id="hidden-price" hidden>$999.00</p><label>Editable order note <input value="$50.00 — leave this alone"></label><pre>const example = "$123.00"; // not a product price</pre><p>Cart actions: <output id="click-count">0</output></p><button id="cart">Add to cart</button></section>
+  </main><footer>Local demo only · No purchases or checkout</footer>
+</body>
+</html>
